@@ -1,0 +1,41 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/ms_email_ms
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+    ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+      dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  rabbitmq:
+    addresses: amqps://rzvxiloa:5sOjTN8BstyEGwUJuiopT77AegeDeV3I@raccoon.lmq.cloudamqp.com/rzvxiloa
+    username: rzvxiloa
+    password: 5sOjTN8BstyEGwUJuiopT77AegeDeV3I
+    virtual-host: rzvxiloa  
+
+  flyway:
+      enabled: true
+      locations: classpath:db/migration
+      baseline-on-migrate: true
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: efroisdrumond@gmail.com
+    password: 123
+    properties:
+      mail:
+      smtp:
+      auth: true
+      starttls:
+      enable: true
+
+
+server:
+  port: 8080
