@@ -9,15 +9,27 @@ import org.springframework.context.annotation.Configuration;
 public class RabbitMq {
 
     private final String queueName = "email-queue";
+    private final String usersListQueueName = "users-list-queue";
+    private final String simulatedDelayQueueName = "simulated-delay-queue";
 
     @Bean
     public Queue queue() {
         return new Queue(queueName, true);
     }
 
-//    @Bean
-//    public Jackson2JsonMessageConverter messageConverter() {
-//        ObjectMapper objectMapper = new ObjectMapper();
-//        return new Jackson2JsonMessageConverter(objectMapper);
-//    }
+    @Bean
+    public Queue usersListQueue() {
+        return new Queue(usersListQueueName, true);
+    }
+
+    @Bean
+    public Queue simulatedDelayQueue() {
+        return new Queue(simulatedDelayQueueName, true);
+    }
+
+   @Bean
+   public Jackson2JsonMessageConverter messageConverter() {
+       ObjectMapper objectMapper = new ObjectMapper();
+       return new Jackson2JsonMessageConverter(objectMapper);
+   }
 }

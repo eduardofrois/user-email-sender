@@ -14,10 +14,10 @@ spring:
       dialect: org.hibernate.dialect.PostgreSQLDialect
 
   rabbitmq:
-    addresses: amqps://rzvxiloa:5sOjTN8BstyEGwUJuiopT77AegeDeV3I@raccoon.lmq.cloudamqp.com/rzvxiloa
-    username: rzvxiloa
-    password: 5sOjTN8BstyEGwUJuiopT77AegeDeV3I
-    virtual-host: rzvxiloa  
+    addresses: amqp://localhost:5672
+    username: guest
+    password: guest
+    virtual-host: /
 
   flyway:
       enabled: true
@@ -31,10 +31,10 @@ spring:
     password: 123
     properties:
       mail:
-      smtp:
-      auth: true
-      starttls:
-      enable: true
+        smtp:
+          auth: true
+          starttls:
+            enable: true
 
 
 server:

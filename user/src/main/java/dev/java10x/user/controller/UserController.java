@@ -15,6 +15,7 @@ import java.util.List;
 
 @Tag(name = "Users", description = "Operations related to users")
 @RestController
+@RequestMapping("/api/v1/users")
 public class UserController {
 
     @Autowired
@@ -25,20 +26,32 @@ public class UserController {
     }
 
     @Operation(summary = "Create a new user", description = "Creates a user and publishes the event for sending email.")
-    @PostMapping("/users")
+    @PostMapping("/create")
     public ResponseEntity<UserModel> createUser(@RequestBody UserDto userDto) {
         var userModel = new UserModel();
         BeanUtils.copyProperties(userDto, userModel);
         return ResponseEntity.status(HttpStatus.CREATED).body(userService.saveAndPublish(userModel));
     }
 
+    @Operation(summary = "Create users in batch", description = "Creates a list of users.")
+    @PostMapping("/create/batch")
+    public ResponseEntity<List<UserModel>> createUsers(@RequestBody List<UserDto> userDtos) {
+        List<UserModel> users = userDtos.stream()
+                .map(userDto -> {
+                    var userModel = new UserModel();
+                    BeanUtils.copyProperties(userDto, userModel);
+                    return userModel;
+                })
+                .toList();
+        
+        
+        return ResponseEntity.status(HttpStatus.CREATED).body(userService.saveAll(users));
+    }
+
     @Operation(summary = "List all users", description = "Returns a list of all registered users.")
-    @GetMapping("list/users")
+    @GetMapping("/list")
     public ResponseEntity<List<UserModel>> getAllUsers() {
         List<UserModel> users = userService.getAllUsers();
         return ResponseEntity.ok(users);
     }
-
-    // TODO: Create routes for deletion, editing, and filtering users
-
 }

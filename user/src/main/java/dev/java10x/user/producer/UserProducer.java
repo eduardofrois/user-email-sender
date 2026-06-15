@@ -1,36 +1,56 @@
 package dev.java10x.user.producer;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.java10x.user.domain.UserModel;
-import dev.java10x.user.dto.EmailDto;
+import dev.java10x.user.dto.ProducerDto;
+import dev.java10x.user.enums.EventType;
+import dev.java10x.user.mapper.ProducerMapper;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 @Component
 public class UserProducer {
 
-   final RabbitTemplate rabbitTemplate;
+    final RabbitTemplate rabbitTemplate;
+    final ProducerMapper producerMapper;
+    final ObjectMapper objectMapper;
 
-//    @Value("${email-queue}")
-//    private String routingKey;
-
-    public UserProducer(RabbitTemplate rabbitTemplate) {
+    public UserProducer(RabbitTemplate rabbitTemplate, ProducerMapper producerMapper, ObjectMapper objectMapper) {
         this.rabbitTemplate = rabbitTemplate;
+        this.producerMapper = producerMapper;
+        this.objectMapper = objectMapper;
     }
 
-    private String routingKey = "email-queue";
+    private String routingEmailKey = "email-queue";
+    private String routingListUsersKey = "users-list-queue";
+    private String simulatedDelayKey = "simulated-delay-queue";
 
-    public void publishEvent(UserModel userModel) {
-//        var emailDto = new EmailDto();
-//        emailDto.setUserId(userModel.getUserId());
-//        emailDto.setEmailTo(userModel.getEmail());
-//        emailDto.setEmailSubject("Welcome to Java10x");
-//        emailDto.setBody("Hello " + userModel.getName() + ",\n\nWelcome to Java10x! We are excited to have you on board.\n\nBest regards,\nJava10x Team");
-//
-//        rabbitTemplate.convertAndSend("", routingKey, emailDto);
+    public void sendEmailEvent(UserModel userModel) {
+        ProducerDto producerDto = producerMapper.toProducerDto(userModel, EventType.USER_CREATED);
+        rabbitTemplate.convertAndSend("", routingEmailKey, toJson(producerDto));
+    }
 
-        String mensage = "Usuario criado: " + userModel.getName();
-        rabbitTemplate.convertAndSend("", routingKey, mensage);
+    public void sendListUsersEvent(List<UserModel> users) {
+        List<ProducerDto> producerDtos = producerMapper.toProducerDtoList(users, EventType.USERS_LIST_REQUESTED);
+        rabbitTemplate.convertAndSend("", routingListUsersKey, toJson(producerDtos));
+    }
 
+    public void sendSimulatedDelayEvent(List<UserModel> users) {
+        users.forEach(user -> {
+            ProducerDto producerDto = producerMapper.toProducerDto(user, EventType.SIMULATED_DELAY_REQUESTED);
+            rabbitTemplate.convertAndSend("", simulatedDelayKey, toJson(producerDto));
+        });
+    }
+
+    private String toJson(Object payload) {
+        try {
+            return objectMapper.writeValueAsString(payload);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalArgumentException("Erro ao converter payload para JSON", exception);
+        }
     }
 
 }
+    

@@ -1,6 +1,7 @@
 package dev.java10x.email.service;
 import dev.java10x.email.domain.EmailModel;
 import dev.java10x.email.enums.EmailStatus;
+import dev.java10x.email.helpers.Delay;
 import dev.java10x.email.repositorie.EmailRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,14 +14,20 @@ import java.time.LocalDateTime;
 
 @Service
 public class EmailService {
+    private final Delay delay;
+
     @Autowired
     private JavaMailSender mailSender;
 
     @Autowired
     private EmailRepository emailRepository;
 
-    @Value("${EMAIL_USERNAME}")
+    @Value("${spring.mail.username}")
     private String emailFrom;
+
+    public EmailService(Delay delay) {
+        this.delay = delay;
+    }
 
     @Transactional
     public void sendEmail(EmailModel emailModel) {
@@ -41,4 +48,8 @@ public class EmailService {
         emailRepository.save(emailModel);
     }
 
+    public void simulateEmailSending(String email) {
+        System.out.println("Email simulado enviado para: " + email);
+        delay.simulateDelay();
+    }
 }
