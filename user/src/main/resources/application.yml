@@ -27,3 +27,9 @@ spring:
 
 server:
   port: 8081
+
+app:
+  rabbitmq:
+    queues:
+      email-notification: email-queue
+      simulated-delay: simulated-delay-queue

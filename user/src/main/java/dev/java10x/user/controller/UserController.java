@@ -35,7 +35,7 @@ public class UserController {
         return ResponseEntity.status(HttpStatus.CREATED).body(user);
     }
 
-    @Operation(summary = "Create users in batch", description = "Creates a list of users.")
+    @Operation(summary = "Create users in batch", description = "Creates users and publishes simulated delay events.")
     @PostMapping("/batch")
     public ResponseEntity<List<UserResponse>> createUsers(
             @RequestBody @Valid List<@Valid CreateUserRequest> requests

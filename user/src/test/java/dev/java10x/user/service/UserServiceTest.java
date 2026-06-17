@@ -61,7 +61,7 @@ class UserServiceTest {
         assertThat(response.email()).isEqualTo("alice@email.com");
 
         ArgumentCaptor<UserModel> userCaptor = ArgumentCaptor.forClass(UserModel.class);
-        verify(userProducer).sendEmailEvent(userCaptor.capture());
+        verify(userProducer).publishUserCreatedEvent(userCaptor.capture());
         assertThat(userCaptor.getValue().getUserId()).isEqualTo(userId);
     }
 

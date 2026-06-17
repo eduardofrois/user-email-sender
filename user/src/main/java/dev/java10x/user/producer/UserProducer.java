@@ -1,11 +1,11 @@
 package dev.java10x.user.producer;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+
 import dev.java10x.user.domain.UserModel;
-import dev.java10x.user.dto.ProducerDto;
+import dev.java10x.user.dto.UserEventDto;
 import dev.java10x.user.enums.EventType;
-import dev.java10x.user.mapper.ProducerMapper;
+import dev.java10x.user.mapper.UserEventMapper;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -13,38 +13,34 @@ import java.util.List;
 @Component
 public class UserProducer {
 
-    final RabbitTemplate rabbitTemplate;
-    final ProducerMapper producerMapper;
-    final ObjectMapper objectMapper;
+    private static final String DEFAULT_EXCHANGE = "";
 
-    public UserProducer(RabbitTemplate rabbitTemplate, ProducerMapper producerMapper, ObjectMapper objectMapper) {
+    private final RabbitTemplate rabbitTemplate;
+    private final UserEventMapper userEventMapper;
+    private final String emailNotificationQueue;
+    private final String simulatedDelayQueue;
+
+    public UserProducer(
+            RabbitTemplate rabbitTemplate,
+            UserEventMapper userEventMapper,
+            @Value("${app.rabbitmq.queues.email-notification}") String emailNotificationQueue,
+            @Value("${app.rabbitmq.queues.simulated-delay}") String simulatedDelayQueue
+    ) {
         this.rabbitTemplate = rabbitTemplate;
-        this.producerMapper = producerMapper;
-        this.objectMapper = objectMapper;
+        this.userEventMapper = userEventMapper;
+        this.emailNotificationQueue = emailNotificationQueue;
+        this.simulatedDelayQueue = simulatedDelayQueue;
     }
 
-    private String routingEmailKey = "email-queue";
-    private String simulatedDelayKey = "simulated-delay-queue";
-
-    public void sendEmailEvent(UserModel userModel) {
-        ProducerDto producerDto = producerMapper.toProducerDto(userModel, EventType.USER_CREATED);
-        rabbitTemplate.convertAndSend("", routingEmailKey, toJson(producerDto));
+    public void publishUserCreatedEvent(UserModel userModel) {
+        UserEventDto event = userEventMapper.toUserEventDto(userModel, EventType.USER_CREATED);
+        rabbitTemplate.convertAndSend(DEFAULT_EXCHANGE, emailNotificationQueue, event);
     }
 
-    public void sendSimulatedDelayEvent(List<UserModel> users) {
+    public void publishSimulatedDelayRequestedEvents(List<UserModel> users) {
         users.forEach(user -> {
-            ProducerDto producerDto = producerMapper.toProducerDto(user, EventType.SIMULATED_DELAY_REQUESTED);
-            rabbitTemplate.convertAndSend("", simulatedDelayKey, toJson(producerDto));
+            UserEventDto event = userEventMapper.toUserEventDto(user, EventType.SIMULATED_DELAY_REQUESTED);
+            rabbitTemplate.convertAndSend(DEFAULT_EXCHANGE, simulatedDelayQueue, event);
         });
     }
-
-    private String toJson(Object payload) {
-        try {
-            return objectMapper.writeValueAsString(payload);
-        } catch (JsonProcessingException exception) {
-            throw new IllegalArgumentException("Erro ao converter payload para JSON", exception);
-        }
-    }
-
 }
-    

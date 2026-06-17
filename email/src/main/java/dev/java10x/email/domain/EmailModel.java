@@ -2,18 +2,12 @@ package dev.java10x.email.domain;
 
 import dev.java10x.email.enums.EmailStatus;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Entity
 @Table(name = "TB_EMAIL")
-@Data
-@AllArgsConstructor
-@NoArgsConstructor
 public class EmailModel {
 
     @Transient
@@ -26,9 +20,18 @@ public class EmailModel {
     private String emailFrom;
     private String emailTo;
     private String emailSubject;
-    @Column(columnDefinition = "BODY")
+    @Column(columnDefinition = "TEXT")
     private String body;
+    private String originEventType;
+    private Integer attempts;
+    private LocalDateTime createdAt;
+    private LocalDateTime lastAttemptAt;
     private LocalDateTime sendDateEmail;
+
+    @Column(columnDefinition = "TEXT")
+    private String errorMessage;
+
+    @Enumerated(EnumType.STRING)
     private EmailStatus statusEmail;
 
     public long getSerialVersionUID() {
@@ -83,12 +86,52 @@ public class EmailModel {
         this.body = body;
     }
 
+    public String getOriginEventType() {
+        return originEventType;
+    }
+
+    public void setOriginEventType(String originEventType) {
+        this.originEventType = originEventType;
+    }
+
+    public Integer getAttempts() {
+        return attempts;
+    }
+
+    public void setAttempts(Integer attempts) {
+        this.attempts = attempts;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getLastAttemptAt() {
+        return lastAttemptAt;
+    }
+
+    public void setLastAttemptAt(LocalDateTime lastAttemptAt) {
+        this.lastAttemptAt = lastAttemptAt;
+    }
+
     public LocalDateTime getSendDateEmail() {
         return sendDateEmail;
     }
 
     public void setSendDateEmail(LocalDateTime sendDateEmail) {
         this.sendDateEmail = sendDateEmail;
+    }
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public void setErrorMessage(String errorMessage) {
+        this.errorMessage = errorMessage;
     }
 
     public EmailStatus getStatusEmail() {

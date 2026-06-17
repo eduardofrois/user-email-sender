@@ -33,7 +33,7 @@ public class UserService {
     public UserResponse createUser(CreateUserRequest request) {
         UserModel user = userMapper.toModel(request);
         UserModel createdUser = userRepository.save(user);
-        userProducer.sendEmailEvent(createdUser);
+        userProducer.publishUserCreatedEvent(createdUser);
         return userMapper.toResponse(createdUser);
     }
 
@@ -44,7 +44,7 @@ public class UserService {
                 .toList();
 
         List<UserModel> createdUsers = userRepository.saveAll(users);
-        userProducer.sendSimulatedDelayEvent(createdUsers);
+        userProducer.publishSimulatedDelayRequestedEvents(createdUsers);
         return userMapper.toResponseList(createdUsers);
     }
 

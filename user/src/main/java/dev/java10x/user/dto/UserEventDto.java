@@ -4,7 +4,7 @@ import java.util.UUID;
 
 import dev.java10x.user.enums.EventType;
 
-public class ProducerDto {
+public class UserEventDto {
     private UUID userId;
     private String name;
     private String email;

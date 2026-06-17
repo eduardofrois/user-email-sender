@@ -38,8 +38,8 @@ SPRING_RABBITMQ_PASSWORD=guest \
 SPRING_RABBITMQ_VIRTUAL_HOST=/ \
 ./mvnw spring-boot:run
 
-# 6. Criar um usuário.
-curl -X POST http://localhost:8081/api/v1/users/create \
+# 6. Criar um usuário e publicar evento na fila email-queue.
+curl -X POST http://localhost:8081/api/v1/users \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Joao Silva",
@@ -47,7 +47,7 @@ curl -X POST http://localhost:8081/api/v1/users/create \
   }'
 
 # 7. Criar três usuários de uma vez e disparar a fila simulated-delay-queue.
-curl -X POST http://localhost:8081/api/v1/users/create/batch \
+curl -X POST http://localhost:8081/api/v1/users/batch \
   -H "Content-Type: application/json" \
   -d '[
     {
@@ -64,5 +64,5 @@ curl -X POST http://localhost:8081/api/v1/users/create/batch \
     }
   ]'
 
-# 8. Listar usuários e disparar a fila users-list-queue.
-curl http://localhost:8081/api/v1/users/list
+# 8. Listar usuários sem publicar eventos.
+curl http://localhost:8081/api/v1/users
