@@ -2,7 +2,6 @@ package dev.java10x.user.domain;
 
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
-import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.UUID;
@@ -10,22 +9,27 @@ import java.util.UUID;
 @Entity
 @AllArgsConstructor
 @NoArgsConstructor
-@Table(name = "TB_USERS")
+@Table(name = "tb_users")
 public class UserModel {
     private static final long serialVersionUID = 1L;
 
     @Id
     @GeneratedValue(strategy = GenerationType.AUTO)
-    private UUID UserId;
+    @Column(name = "user_id")
+    private UUID userId;
+
+    @Column(nullable = false)
     private String name;
+
+    @Column(nullable = false)
     private String email;
 
     public UUID getUserId() {
-        return UserId;
+        return userId;
     }
 
     public void setUserId(UUID userId) {
-        UserId = userId;
+        this.userId = userId;
     }
 
     public String getName() {

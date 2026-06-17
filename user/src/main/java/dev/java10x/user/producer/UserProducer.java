@@ -24,17 +24,11 @@ public class UserProducer {
     }
 
     private String routingEmailKey = "email-queue";
-    private String routingListUsersKey = "users-list-queue";
     private String simulatedDelayKey = "simulated-delay-queue";
 
     public void sendEmailEvent(UserModel userModel) {
         ProducerDto producerDto = producerMapper.toProducerDto(userModel, EventType.USER_CREATED);
         rabbitTemplate.convertAndSend("", routingEmailKey, toJson(producerDto));
-    }
-
-    public void sendListUsersEvent(List<UserModel> users) {
-        List<ProducerDto> producerDtos = producerMapper.toProducerDtoList(users, EventType.USERS_LIST_REQUESTED);
-        rabbitTemplate.convertAndSend("", routingListUsersKey, toJson(producerDtos));
     }
 
     public void sendSimulatedDelayEvent(List<UserModel> users) {

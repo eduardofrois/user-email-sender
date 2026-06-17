@@ -6,7 +6,7 @@ Este repositório é um projeto de estudos. Ele não tenta ser um serviço real 
 
 O projeto tem dois serviços:
 
-- `user`: expõe uma API REST para criar e listar usuários.
+- `user`: expõe uma API REST para CRUD de usuários.
 - `email`: consome mensagens do RabbitMQ e simula ações relacionadas a e-mail.
 
 Fluxo principal:
@@ -27,9 +27,15 @@ user/
     controller/UserController.java
     service/UserService.java
     producer/UserProducer.java
+    mapper/UserMapper.java
     mapper/ProducerMapper.java
+    dto/CreateUserRequest.java
+    dto/UpdateUserRequest.java
+    dto/PatchUserRequest.java
+    dto/UserResponse.java
     dto/ProducerDto.java
     enums/EventType.java
+    exception/GlobalExceptionHandler.java
 
 email/
   src/main/java/dev/java10x/email
@@ -89,7 +95,6 @@ spring:
 Filas usadas no estudo:
 
 - `email-queue`: recebe evento quando um usuário é criado.
-- `users-list-queue`: recebe evento quando a lista de usuários é consultada.
 - `simulated-delay-queue`: recebe evento quando usuários são criados em lote.
 
 As filas são declaradas no `email-service`, em `RabbitMq.java`.
@@ -109,10 +114,9 @@ Campos do evento:
 }
 ```
 
-Tipos atuais em `EventType`:
+Tipos enviados atualmente pelo `UserProducer`:
 
 - `USER_CREATED`
-- `USERS_LIST_REQUESTED`
 - `SIMULATED_DELAY_REQUESTED`
 
 Neste projeto, o producer converte o DTO para JSON string antes de enviar. Isso mantém o consumer simples para estudo, recebendo `String` com `@Payload`.
@@ -125,10 +129,12 @@ Base URL:
 http://localhost:8081/api/v1/users
 ```
 
+### Criar usuário
+
 Criar um usuário:
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/users/create \
+curl -X POST http://localhost:8081/api/v1/users \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Joao Silva",
@@ -139,16 +145,18 @@ curl -X POST http://localhost:8081/api/v1/users/create \
 O fluxo esperado:
 
 ```text
-POST /create
+POST /api/v1/users
   -> salva usuário no banco do user-service
   -> publica evento USER_CREATED na email-queue
   -> email-service consome e imprime a mensagem
 ```
 
+### Criar usuários em lote
+
 Criar três usuários de uma vez:
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/users/create/batch \
+curl -X POST http://localhost:8081/api/v1/users/batch \
   -H "Content-Type: application/json" \
   -d '[
     {
@@ -169,27 +177,120 @@ curl -X POST http://localhost:8081/api/v1/users/create/batch \
 O fluxo esperado:
 
 ```text
-POST /create/batch
+POST /api/v1/users/batch
   -> salva os usuários no banco do user-service
   -> publica um evento por usuário na simulated-delay-queue
   -> email-service consome cada mensagem
   -> EmailService.simulateEmailSending imprime e executa delay de 5 segundos
 ```
 
+### Listar usuários
+
 Listar usuários:
 
 ```bash
-curl http://localhost:8081/api/v1/users/list
+curl http://localhost:8081/api/v1/users
 ```
 
 O fluxo esperado:
 
 ```text
-GET /list
+GET /api/v1/users
   -> busca usuários no banco
-  -> publica evento USERS_LIST_REQUESTED na users-list-queue
   -> retorna a lista na resposta HTTP
 ```
+
+### Buscar usuário por ID
+
+```bash
+curl http://localhost:8081/api/v1/users/11111111-1111-1111-1111-111111111111
+```
+
+O fluxo esperado:
+
+```text
+GET /api/v1/users/{userId}
+  -> busca usuário por UUID
+  -> retorna 200 com o usuário encontrado
+  -> retorna 404 se o usuário não existir
+```
+
+### Atualizar usuário
+
+Atualização completa com `PUT`:
+
+```bash
+curl -X PUT http://localhost:8081/api/v1/users/11111111-1111-1111-1111-111111111111 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Joao Silva Atualizado",
+    "email": "joao.atualizado@email.com"
+  }'
+```
+
+O fluxo esperado:
+
+```text
+PUT /api/v1/users/{userId}
+  -> exige name e email
+  -> atualiza o usuário existente
+  -> retorna 200 com os dados atualizados
+  -> retorna 404 se o usuário não existir
+```
+
+### Atualizar parcialmente
+
+Atualização parcial com `PATCH`:
+
+```bash
+curl -X PATCH http://localhost:8081/api/v1/users/11111111-1111-1111-1111-111111111111 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Joao Parcial"
+  }'
+```
+
+O fluxo esperado:
+
+```text
+PATCH /api/v1/users/{userId}
+  -> atualiza somente os campos enviados
+  -> exige ao menos um campo no corpo da requisição
+  -> retorna 200 com os dados atualizados
+  -> retorna 404 se o usuário não existir
+```
+
+### Deletar usuário
+
+```bash
+curl -X DELETE http://localhost:8081/api/v1/users/11111111-1111-1111-1111-111111111111
+```
+
+O fluxo esperado:
+
+```text
+DELETE /api/v1/users/{userId}
+  -> remove o usuário existente
+  -> retorna 204 sem corpo
+  -> retorna 404 se o usuário não existir
+```
+
+### Respostas de erro
+
+O `user-service` retorna respostas padronizadas para erros comuns:
+
+```json
+{
+  "timestamp": "2026-06-16T23:00:00-03:00",
+  "status": 404,
+  "error": "Not Found",
+  "message": "Usuário não encontrado para o código informado: uuid",
+  "path": "/api/v1/users/uuid",
+  "fields": null
+}
+```
+
+Validações de campos retornam `400 Bad Request` com o mapa `fields`.
 
 ## Rodando os Serviços
 
@@ -229,6 +330,9 @@ Este projeto é bom para estudar:
 - producer e consumer com RabbitMQ
 - filas declaradas por Spring
 - DTOs para payload de eventos
+- DTOs separados para entrada e saída HTTP
+- mapper entre entidade e DTO
+- tratamento global de erros com `@RestControllerAdvice`
 - serialização JSON
 - transações com `@Transactional`
 - uso de `save` e `saveAll`
@@ -240,7 +344,6 @@ Este projeto é bom para estudar:
 Por ser um projeto de estudo, algumas decisões são simplificadas:
 
 - não há autenticação
-- não há tratamento global de erro
 - não há retry ou dead letter queue
 - os consumers imprimem mensagens no terminal
 - os eventos são enviados por filas simples usando a default exchange

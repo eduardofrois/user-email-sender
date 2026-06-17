@@ -3,7 +3,6 @@ package dev.java10x.user.mapper;
 import dev.java10x.user.domain.UserModel;
 import dev.java10x.user.dto.ProducerDto;
 import dev.java10x.user.enums.EventType;
-
 import org.springframework.stereotype.Component;
 
 import java.util.List;
