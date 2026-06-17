@@ -130,16 +130,17 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Client[Client / API Consumer]
-    Controller[EmailHistoryController]
-    Service[EmailHistoryService]
-    Repository[EmailRepository]
-    Database[(email PostgreSQL)]
+    Client["Client / API Consumer"]
+    Controller["EmailHistoryController"]
+    Service["EmailHistoryService"]
+    Repository["EmailHistoryRepository"]
+    Database[("email PostgreSQL")]
 
-    Client -->|GET /api/v1/emails| Controller
-    Client -->|GET /api/v1/emails/{emailId}| Controller
-    Client -->|GET /api/v1/emails/users/{userId}| Controller
-    Client -->|GET /api/v1/emails/status/{status}| Controller
+    Client -->|"GET /api/v1/emails"| Controller
+    Client -->|"GET /api/v1/emails/{emailId}"| Controller
+    Client -->|"GET /api/v1/emails/users/{userId}"| Controller
+    Client -->|"GET /api/v1/emails/status/{status}"| Controller
+
     Controller --> Service
     Service --> Repository
     Repository --> Database
