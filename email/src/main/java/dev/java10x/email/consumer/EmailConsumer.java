@@ -19,7 +19,10 @@ public class EmailConsumer {
         this.emailService = emailService;
     }
 
-    @RabbitListener(queues = "${app.rabbitmq.queues.email-notification}")
+    @RabbitListener(
+            queues = "${app.rabbitmq.queues.email-notification}",
+            containerFactory = "emailRetryListenerContainerFactory"
+    )
     public void listenEmailNotificationQueue(@Payload UserEventDto event) {
         log.info("Received user created event for user {}", event.userId());
         emailService.sendUserCreatedEmail(event);

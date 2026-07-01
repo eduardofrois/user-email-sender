@@ -42,6 +42,14 @@ server:
 
 app:
   rabbitmq:
+    exchanges:
+      email-dead-letter: email-dlx
     queues:
       email-notification: email-queue
+      email-dead-letter: email-dlq
       simulated-delay: simulated-delay-queue
+    retry:
+      max-attempts: 3
+      initial-interval: 2000
+      multiplier: 2.0
+      max-interval: 10000

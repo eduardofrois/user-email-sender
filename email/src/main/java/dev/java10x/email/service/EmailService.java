@@ -13,7 +13,6 @@ import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
@@ -27,47 +26,67 @@ public class EmailService {
     private final EmailMapper emailMapper;
     private final Delay delay;
     private final String emailFrom;
+    private final int maxAttempts;
 
     public EmailService(
             JavaMailSender mailSender,
             EmailRepository emailRepository,
             EmailMapper emailMapper,
             Delay delay,
-            @Value("${spring.mail.username}") String emailFrom
+            @Value("${spring.mail.username}") String emailFrom,
+            @Value("${app.rabbitmq.retry.max-attempts}") int maxAttempts
     ) {
         this.mailSender = mailSender;
         this.emailRepository = emailRepository;
         this.emailMapper = emailMapper;
         this.delay = delay;
         this.emailFrom = emailFrom;
+        this.maxAttempts = maxAttempts;
     }
 
-    @Transactional
     public void sendUserCreatedEmail(UserEventDto event) {
-        EmailModel emailModel = emailMapper.toUserCreatedEmail(event, emailFrom);
+        EmailModel emailModel = findOrCreatePendingEmail(event);
         sendEmail(emailModel);
     }
 
-    @Transactional
     public void sendEmail(EmailModel emailModel) {
         initializeHistory(emailModel);
-        emailRepository.save(emailModel);
-
         try {
             registerAttempt(emailModel);
+            emailRepository.save(emailModel);
+
             mailSender.send(buildMessage(emailModel));
             markAsSent(emailModel);
         } catch (MailException exception) {
-            markAsFailed(emailModel, exception);
+            markAsPendingFailure(emailModel, exception);
+            emailRepository.save(emailModel);
             log.error("Failed to send email to user {}", emailModel.getUserId(), exception);
+            throw exception;
         }
 
         emailRepository.save(emailModel);
     }
 
+    public void markAsFailedAfterRetries(UserEventDto event, Throwable exception) {
+        EmailModel emailModel = findOrCreatePendingEmail(event);
+        initializeHistory(emailModel);
+        markAsFailed(emailModel, exception);
+        emailRepository.save(emailModel);
+        log.error("Email message for user {} moved to DLQ after {} attempts", event.userId(), emailModel.getAttempts());
+    }
+
     public void simulateEmailSending(UserEventDto event) {
         log.info("Simulated email sent to user {} at {}", event.userId(), event.email());
         delay.simulateDelay();
+    }
+
+    private EmailModel findOrCreatePendingEmail(UserEventDto event) {
+        return emailRepository.findFirstByUserIdAndOriginEventTypeAndStatusEmailOrderByCreatedAtDesc(
+                        event.userId(),
+                        event.eventType(),
+                        EmailStatus.PENDING
+                )
+                .orElseGet(() -> emailMapper.toUserCreatedEmail(event, emailFrom));
     }
 
     private SimpleMailMessage buildMessage(EmailModel emailModel) {
@@ -102,10 +121,31 @@ public class EmailService {
     private void markAsSent(EmailModel emailModel) {
         emailModel.setStatusEmail(EmailStatus.SENT);
         emailModel.setSendDateEmail(LocalDateTime.now());
+        emailModel.setErrorMessage(null);
     }
 
-    private void markAsFailed(EmailModel emailModel, MailException exception) {
+    private void markAsPendingFailure(EmailModel emailModel, MailException exception) {
+        emailModel.setStatusEmail(EmailStatus.PENDING);
+        emailModel.setErrorMessage(getRootCauseMessage(exception));
+    }
+
+    private void markAsFailed(EmailModel emailModel, Throwable exception) {
+        if (emailModel.getAttempts() == null || emailModel.getAttempts() < maxAttempts) {
+            emailModel.setAttempts(maxAttempts);
+        }
+
+        emailModel.setLastAttemptAt(LocalDateTime.now());
         emailModel.setStatusEmail(EmailStatus.FAILED);
-        emailModel.setErrorMessage(exception.getMessage());
+        emailModel.setErrorMessage(getRootCauseMessage(exception));
+    }
+
+    private String getRootCauseMessage(Throwable exception) {
+        Throwable rootCause = exception;
+
+        while (rootCause.getCause() != null) {
+            rootCause = rootCause.getCause();
+        }
+
+        return rootCause.getMessage();
     }
 }

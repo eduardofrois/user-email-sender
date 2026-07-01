@@ -25,6 +25,7 @@ flowchart LR
 
     subgraph Broker[RabbitMQ]
         EmailQueue[email-queue]
+        EmailDlq[email-dlq]
         DelayQueue[simulated-delay-queue]
     end
 
@@ -47,6 +48,7 @@ flowchart LR
     UserProducer --> DelayQueue
 
     EmailQueue --> EmailConsumer
+    EmailQueue -. falha definitiva .-> EmailDlq
     DelayQueue --> EmailConsumer
     EmailConsumer --> EmailServiceLayer
     EmailServiceLayer --> EmailRepository
@@ -97,9 +99,15 @@ sequenceDiagram
     alt Envio realizado
         SMTP-->>EmailService: Sucesso
         EmailService->>EmailDB: Atualiza status SENT, attempts, sendDateEmail
-    else Falha no envio
+    else Falha temporaria
         SMTP-->>EmailService: Erro
-        EmailService->>EmailDB: Atualiza status FAILED, attempts, errorMessage
+        EmailService->>EmailDB: Mantem PENDING, incrementa attempts, lastAttemptAt e errorMessage
+        EmailConsumer->>EmailConsumer: Retry com exponential backoff
+    else Falha apos limite de tentativas
+        SMTP-->>EmailService: Erro
+        EmailService->>EmailDB: Atualiza status FAILED, attempts, lastAttemptAt e errorMessage
+        EmailConsumer->>RabbitMQ: Rejeita sem requeue
+        RabbitMQ->>RabbitMQ: Move mensagem para email-dlq
     end
 ```
 
@@ -204,12 +212,59 @@ As filas são configuradas nos arquivos `application.yml` por meio de `app.rabbi
 ```yaml
 app:
   rabbitmq:
+    exchanges:
+      email-dead-letter: email-dlx
     queues:
       email-notification: email-queue
+      email-dead-letter: email-dlq
       simulated-delay: simulated-delay-queue
+    retry:
+      max-attempts: 3
+      initial-interval: 2000
+      multiplier: 2.0
+      max-interval: 10000
 ```
 
 O `email-service` declara as filas em `RabbitMqConfig`. O `user-service` publica nas filas configuradas usando `RabbitTemplate` e `Jackson2JsonMessageConverter`.
+
+| Fila | Uso |
+| --- | --- |
+| `email-queue` | Fila principal de eventos de e-mail. |
+| `email-dlq` | Dead Letter Queue de mensagens que falharam após o limite de retry. |
+| `simulated-delay-queue` | Fila de processamento simulado usada no fluxo em lote. |
+
+## Retry, Backoff e DLQ
+
+O `email-service` usa retry automático do Spring AMQP no listener da fila `email-queue`.
+
+**Retry** é a repetição automática do processamento quando o envio falha por um erro temporário, como indisponibilidade do SMTP. O limite atual é configurado por `app.rabbitmq.retry.max-attempts`.
+
+**Backoff** é o intervalo entre as tentativas. A configuração atual usa exponential backoff: com `initial-interval: 2000`, `multiplier: 2.0` e `max-interval: 10000`, as tentativas aguardam intervalos crescentes até o teto configurado.
+
+**Dead Letter Queue (DLQ)** é a fila que recebe mensagens rejeitadas depois da falha definitiva. A fila principal `email-queue` possui os argumentos:
+
+```text
+x-dead-letter-exchange = email-dlx
+x-dead-letter-routing-key = email-dlq
+```
+
+### Fluxo com sucesso
+
+1. `user-service` publica o evento `USER_CREATED` na `email-queue`.
+2. `email-service` consome a mensagem e cria ou reutiliza um histórico `PENDING`.
+3. A tentativa é registrada em `attempts` e `lastAttemptAt`.
+4. Se o SMTP aceitar o envio, o histórico fica `SENT`, com `sendDateEmail` preenchido.
+5. A mensagem é confirmada pelo listener e sai da fila principal.
+
+### Fluxo com falha
+
+1. `email-service` registra a tentativa e chama o SMTP.
+2. Se o SMTP falhar, o historico permanece `PENDING`, com `attempts`, `lastAttemptAt` e `errorMessage` atualizados.
+3. A excecao volta para o interceptor do Spring AMQP.
+4. O interceptor aguarda o backoff configurado e tenta novamente.
+5. Após o limite de tentativas, o recoverer marca o histórico como `FAILED`.
+6. A mensagem é rejeitada sem requeue, evitando loop infinito.
+7. O RabbitMQ move a mensagem para `email-dlq`.
 
 ## Histórico de Envio
 
@@ -435,7 +490,32 @@ spring:
 
 ### SMTP
 
-O `email-service` usa `spring.mail.*` para envio real de e-mails. Em ambiente local, credenciais inválidas fazem o envio falhar e o histórico é gravado com status `FAILED` e `errorMessage`.
+O `email-service` usa `spring.mail.*` para envio real de e-mails. Em ambiente local, credenciais inválidas fazem o envio falhar, acionar retry com backoff e, ao final, gravar o histórico com status `FAILED` e `errorMessage`.
+
+### Testar retry e DLQ localmente
+
+1. Suba RabbitMQ, PostgreSQL e os dois serviços.
+2. Acesse o RabbitMQ Management em `http://localhost:15672` com `guest` / `guest`.
+3. Se a fila `email-queue` já existir sem DLQ, apague a fila pelo painel ou recrie o container do RabbitMQ. O RabbitMQ não permite redeclarar uma fila existente com argumentos diferentes.
+4. Configure credenciais SMTP inválidas no `email-service` para forçar falha de envio.
+5. Crie um usuário pelo `user-service`:
+
+```bash
+curl -X POST http://localhost:8081/api/v1/users \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Usuario Retry",
+    "email": "usuario.retry@email.com"
+  }'
+```
+
+6. Consulte o histórico:
+
+```bash
+curl http://localhost:8080/api/v1/emails/status/FAILED
+```
+
+7. No RabbitMQ Management, confira a mensagem em `email-dlq`.
 
 ## Decisões Técnicas
 
@@ -448,8 +528,6 @@ O `email-service` usa `spring.mail.*` para envio real de e-mails. Em ambiente lo
 ## Limitações Atuais
 
 - Não há autenticação/autorização.
-- Não há retry automático real.
-- Não há dead letter queue.
 - Não há paginação nas consultas de histórico.
 - Não há rastreamento distribuído entre os serviços.
 - `DELIVERED` está reservado, mas ainda não há confirmação de entrega pelo provedor SMTP.
@@ -457,7 +535,6 @@ O `email-service` usa `spring.mail.*` para envio real de e-mails. Em ambiente lo
 ## Próximos Passos Recomendados
 
 - Adicionar paginação e filtros avançados no histórico de e-mails.
-- Implementar retry com backoff e dead letter queue.
 - Adicionar correlation ID nos eventos e logs.
 - Criar testes de integração com RabbitMQ e PostgreSQL via Testcontainers.
 - Proteger APIs com autenticação.
