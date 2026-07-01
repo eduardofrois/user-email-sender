@@ -1,0 +1,9 @@
+target/
+.mvn/
+mvnw
+mvnw.cmd
+.git/
+.idea/
+*.log
+.env
+docker-compose.yml

@@ -1,8 +1,8 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5433/ms_email_ms
-    username: postgres
-    password: postgres
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/ms_email_ms}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -14,10 +14,10 @@ spring:
       dialect: org.hibernate.dialect.PostgreSQLDialect
 
   rabbitmq:
-    addresses: amqp://localhost:5672
-    username: guest
-    password: guest
-    virtual-host: /
+    addresses: ${SPRING_RABBITMQ_ADDRESSES:amqp://localhost:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
+    virtual-host: ${SPRING_RABBITMQ_VIRTUAL_HOST:/}
 
   flyway:
       enabled: true
@@ -25,10 +25,10 @@ spring:
       baseline-on-migrate: true
 
   mail:
-    host: smtp.gmail.com
-    port: 587
-    username: efroisdrumond@gmail.com
-    password: 123
+    host: ${SPRING_MAIL_HOST:smtp.gmail.com}
+    port: ${SPRING_MAIL_PORT:587}
+    username: ${SPRING_MAIL_USERNAME:change-me@example.com}
+    password: ${SPRING_MAIL_PASSWORD:change-me}
     properties:
       mail:
         smtp:
@@ -43,13 +43,13 @@ server:
 app:
   rabbitmq:
     exchanges:
-      email-dead-letter: email-dlx
+      email-dead-letter: ${APP_RABBITMQ_EXCHANGES_EMAILDEADLETTER:email-dlx}
     queues:
-      email-notification: email-queue
-      email-dead-letter: email-dlq
-      simulated-delay: simulated-delay-queue
+      email-notification: ${APP_RABBITMQ_QUEUES_EMAILNOTIFICATION:email-queue}
+      email-dead-letter: ${APP_RABBITMQ_QUEUES_EMAILDEADLETTER:email-dlq}
+      simulated-delay: ${APP_RABBITMQ_QUEUES_SIMULATEDDELAY:simulated-delay-queue}
     retry:
-      max-attempts: 3
-      initial-interval: 2000
-      multiplier: 2.0
-      max-interval: 10000
+      max-attempts: ${APP_RABBITMQ_RETRY_MAXATTEMPTS:3}
+      initial-interval: ${APP_RABBITMQ_RETRY_INITIALINTERVAL:2000}
+      multiplier: ${APP_RABBITMQ_RETRY_MULTIPLIER:2.0}
+      max-interval: ${APP_RABBITMQ_RETRY_MAXINTERVAL:10000}

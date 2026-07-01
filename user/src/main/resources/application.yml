@@ -2,9 +2,9 @@ spring:
   application:
     name: user
   datasource:
-    url: jdbc:postgresql://localhost:5435/ms-user-ms
-    username: postgres-user
-    password: postgres-password
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5435/ms-user-ms}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres-user}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres-password}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -15,10 +15,10 @@ spring:
       dialect: org.hibernate.dialect.PostgreSQLDialect
 
   rabbitmq:
-    addresses: amqp://localhost:5672
-    username: guest
-    password: guest
-    virtual-host: /
+    addresses: ${SPRING_RABBITMQ_ADDRESSES:amqp://localhost:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
+    virtual-host: ${SPRING_RABBITMQ_VIRTUAL_HOST:/}
 
   flyway:
     enabled: true
@@ -31,5 +31,5 @@ server:
 app:
   rabbitmq:
     queues:
-      email-notification: email-queue
-      simulated-delay: simulated-delay-queue
+      email-notification: ${APP_RABBITMQ_QUEUES_EMAILNOTIFICATION:email-queue}
+      simulated-delay: ${APP_RABBITMQ_QUEUES_SIMULATEDDELAY:simulated-delay-queue}

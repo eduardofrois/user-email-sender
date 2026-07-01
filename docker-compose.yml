@@ -1,0 +1,122 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: user-mail-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
+      USER_DB_SCHEMA: ${USER_DB_SCHEMA}
+      USER_DB_USERNAME: ${USER_DB_USERNAME}
+      USER_DB_PASSWORD: ${USER_DB_PASSWORD}
+      EMAIL_DB_SCHEMA: ${EMAIL_DB_SCHEMA}
+      EMAIL_DB_USERNAME: ${EMAIL_DB_USERNAME}
+      EMAIL_DB_PASSWORD: ${EMAIL_DB_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_ADMIN_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: user-mail-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VIRTUAL_HOST:-/}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  user-service:
+    build:
+      context: ./user
+      dockerfile: Dockerfile
+    image: ${USER_SERVICE_IMAGE:-user-mail/user-service:local}
+    container_name: user-service
+    restart: unless-stopped
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?currentSchema=${USER_DB_SCHEMA}
+      SPRING_DATASOURCE_USERNAME: ${USER_DB_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${USER_DB_PASSWORD}
+      SPRING_RABBITMQ_ADDRESSES: amqp://rabbitmq:5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VIRTUAL_HOST:-/}
+      APP_RABBITMQ_QUEUES_EMAILNOTIFICATION: ${EMAIL_QUEUE}
+      APP_RABBITMQ_QUEUES_SIMULATEDDELAY: ${SIMULATED_DELAY_QUEUE}
+      JAVA_OPTS: ${USER_SERVICE_JAVA_OPTS:-}
+    ports:
+      - "${USER_SERVICE_PORT:-8081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  email-service:
+    build:
+      context: ./email
+      dockerfile: Dockerfile
+    image: ${EMAIL_SERVICE_IMAGE:-user-mail/email-service:local}
+    container_name: email-service
+    restart: unless-stopped
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?currentSchema=${EMAIL_DB_SCHEMA}
+      SPRING_DATASOURCE_USERNAME: ${EMAIL_DB_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${EMAIL_DB_PASSWORD}
+      SPRING_RABBITMQ_ADDRESSES: amqp://rabbitmq:5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      SPRING_RABBITMQ_VIRTUAL_HOST: ${RABBITMQ_VIRTUAL_HOST:-/}
+      SPRING_MAIL_HOST: ${SMTP_HOST}
+      SPRING_MAIL_PORT: ${SMTP_PORT}
+      SPRING_MAIL_USERNAME: ${SMTP_USERNAME}
+      SPRING_MAIL_PASSWORD: ${SMTP_PASSWORD}
+      APP_RABBITMQ_EXCHANGES_EMAILDEADLETTER: ${EMAIL_DLX}
+      APP_RABBITMQ_QUEUES_EMAILNOTIFICATION: ${EMAIL_QUEUE}
+      APP_RABBITMQ_QUEUES_EMAILDEADLETTER: ${EMAIL_DLQ}
+      APP_RABBITMQ_QUEUES_SIMULATEDDELAY: ${SIMULATED_DELAY_QUEUE}
+      APP_RABBITMQ_RETRY_MAXATTEMPTS: ${EMAIL_RETRY_MAX_ATTEMPTS}
+      APP_RABBITMQ_RETRY_INITIALINTERVAL: ${EMAIL_RETRY_INITIAL_INTERVAL}
+      APP_RABBITMQ_RETRY_MULTIPLIER: ${EMAIL_RETRY_MULTIPLIER}
+      APP_RABBITMQ_RETRY_MAXINTERVAL: ${EMAIL_RETRY_MAX_INTERVAL}
+      JAVA_OPTS: ${EMAIL_SERVICE_JAVA_OPTS:-}
+    ports:
+      - "${EMAIL_SERVICE_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+
+networks:
+  app-network:
+    driver: bridge

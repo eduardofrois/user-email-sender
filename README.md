@@ -290,6 +290,41 @@ curl http://localhost:8080/api/v1/emails/status/FAILED
 - Docker
 - Docker Compose
 
+### Opção Recomendada: Docker Compose
+
+A raiz do projeto possui um `docker-compose.yml` preparado para execução local e para um deploy inicial em VPS.
+
+Essa configuração sobe:
+
+- `user-service`;
+- `email-service`;
+- RabbitMQ com Management UI;
+- um único PostgreSQL;
+- dois schemas no mesmo banco: um para o `user-service` e outro para o `email-service`.
+
+Crie o arquivo `.env` a partir do exemplo:
+
+```bash
+cp .env.example .env
+```
+
+Edite o `.env` com senhas reais antes de usar em uma VPS.
+
+Suba a stack:
+
+```bash
+docker compose --env-file .env up -d --build
+```
+
+O PostgreSQL é inicializado com os schemas configurados no `.env`:
+
+```text
+USER_DB_SCHEMA=user_service
+EMAIL_DB_SCHEMA=email_service
+```
+
+Cada serviço acessa somente seu próprio schema usando credenciais próprias. Isso mantém isolamento lógico mesmo usando um único banco PostgreSQL.
+
 ### Portas
 
 | Recurso | Porta |
@@ -298,8 +333,13 @@ curl http://localhost:8080/api/v1/emails/status/FAILED
 | `email-service` | `8080` |
 | RabbitMQ | `5672` |
 | RabbitMQ Management | `15672` |
-| PostgreSQL do `user-service` | `5435` |
-| PostgreSQL do `email-service` | `5433` |
+| PostgreSQL | `5432` |
+
+As portas podem ser alteradas no `.env`.
+
+### Opção Manual: Serviços Fora do Docker
+
+Também é possível rodar os serviços manualmente usando os `docker-compose.yml` internos de cada módulo apenas para os bancos.
 
 ### Subir RabbitMQ
 
@@ -429,4 +469,3 @@ Em ambiente local, credenciais inválidas são úteis para testar retry, falha d
 - **Retry no consumidor**: o retry fica no `email-service`, onde a falha acontece.
 - **DLQ para falha definitiva**: mensagens que não puderam ser processadas não bloqueiam a fila principal.
 - **DTOs explícitos**: os eventos usam contratos próprios em vez de expor diretamente entidades JPA.
-
