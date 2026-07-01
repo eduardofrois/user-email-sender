@@ -1,191 +1,86 @@
 # User Mail Sender MS
 
-Plataforma de microserviços para cadastro de usuários, publicação de eventos e processamento assíncrono de e-mails com histórico de envio.
+Projeto de estudo sobre microserviços com Spring Boot, comunicação assíncrona com RabbitMQ, persistência isolada por serviço e processamento confiável de envio de e-mails.
 
-O projeto é composto por dois serviços Spring Boot independentes:
+A aplicação simula um cenário comum em sistemas distribuídos: um serviço cadastra usuários e publica eventos; outro serviço consome esses eventos, envia e-mails e mantém um histórico do processamento.
 
-- `user-service`: gerencia usuários e publica eventos de domínio.
-- `email-service`: consome eventos, processa envios de e-mail e disponibiliza consultas do histórico de envio.
+## Objetivo do Projeto
 
-A comunicação entre os serviços é assíncrona via RabbitMQ. Cada serviço possui seu próprio banco PostgreSQL, mantendo isolamento de dados e responsabilidade por domínio.
+Este projeto foi construído para estudar, de forma prática:
 
-## Arquitetura
+- separação de responsabilidades entre microserviços;
+- comunicação assíncrona com RabbitMQ;
+- publicação e consumo de eventos;
+- persistência com PostgreSQL e Flyway;
+- histórico operacional de processamento;
+- retry automático com exponential backoff;
+- Dead Letter Queue para falhas definitivas.
+
+O foco não é criar uma plataforma completa de e-mail, mas demonstrar boas práticas iniciais de mensageria e resiliência em um ambiente simples de executar localmente.
+
+## Visão Geral da Arquitetura
 
 ```mermaid
 flowchart LR
-    Client[Client / API Consumer]
+    Client[Cliente HTTP]
+    UserService[user-service]
+    UserDb[(PostgreSQL users)]
+    RabbitMQ[(RabbitMQ)]
+    EmailQueue[email-queue]
+    EmailDlq[email-dlq]
+    EmailService[email-service]
+    EmailDb[(PostgreSQL emails)]
+    SMTP[SMTP Provider]
 
-    subgraph UserService[user-service :8081]
-        UserController[UserController]
-        UserServiceLayer[UserService]
-        UserRepository[UserRepository]
-        UserProducer[UserProducer]
-        UserDb[(PostgreSQL users)]
-    end
-
-    subgraph Broker[RabbitMQ]
-        EmailQueue[email-queue]
-        EmailDlq[email-dlq]
-        DelayQueue[simulated-delay-queue]
-    end
-
-    subgraph EmailService[email-service :8080]
-        EmailConsumer[EmailConsumer]
-        EmailServiceLayer[EmailService]
-        EmailHistoryController[EmailHistoryController]
-        EmailHistoryService[EmailHistoryService]
-        EmailRepository[EmailRepository]
-        EmailDb[(PostgreSQL emails)]
-        MailProvider[SMTP Provider]
-    end
-
-    Client --> UserController
-    UserController --> UserServiceLayer
-    UserServiceLayer --> UserRepository
-    UserRepository --> UserDb
-    UserServiceLayer --> UserProducer
-    UserProducer --> EmailQueue
-    UserProducer --> DelayQueue
-
-    EmailQueue --> EmailConsumer
+    Client --> UserService
+    UserService --> UserDb
+    UserService --> RabbitMQ
+    RabbitMQ --> EmailQueue
+    EmailQueue --> EmailService
     EmailQueue -. falha definitiva .-> EmailDlq
-    DelayQueue --> EmailConsumer
-    EmailConsumer --> EmailServiceLayer
-    EmailServiceLayer --> EmailRepository
-    EmailRepository --> EmailDb
-    EmailServiceLayer --> MailProvider
-
-    Client --> EmailHistoryController
-    EmailHistoryController --> EmailHistoryService
-    EmailHistoryService --> EmailRepository
+    EmailService --> EmailDb
+    EmailService --> SMTP
 ```
 
-### Responsabilidades
+O `user-service` não envia e-mails diretamente. Ele apenas publica eventos no RabbitMQ. O `email-service` é o responsável por consumir esses eventos, tentar o envio e registrar o resultado.
 
-| Componente | Responsabilidade |
+## Serviços
+
+| Serviço | Porta | Responsabilidade | Banco |
+| --- | --- | --- | --- |
+| `user-service` | `8081` | CRUD de usuários e publicação de eventos | PostgreSQL `ms-user-ms` |
+| `email-service` | `8080` | Consumo de eventos, envio de e-mails e histórico | PostgreSQL `ms_email_ms` |
+
+## Componentes Principais
+
+| Componente | Função |
 | --- | --- |
-| `user-service` | CRUD de usuários e publicação de eventos relacionados ao usuário. |
-| `email-service` | Consumo de eventos, envio de e-mails e consulta do histórico de envio. |
-| RabbitMQ | Transporte assíncrono dos eventos entre serviços. |
-| PostgreSQL `user` | Persistência exclusiva dos dados de usuários. |
-| PostgreSQL `email` | Persistência exclusiva dos registros de envio e histórico de e-mails. |
+| `UserController` | Expõe os endpoints de usuários. |
+| `UserService` | Executa as regras de cadastro, atualização e remoção de usuários. |
+| `UserProducer` | Publica eventos no RabbitMQ. |
+| `EmailConsumer` | Consome eventos das filas RabbitMQ. |
+| `EmailService` | Monta o e-mail, envia via SMTP e atualiza o histórico. |
+| `EmailHistoryController` | Expõe endpoints para consultar o histórico de e-mails. |
+| `EmailRepository` | Persiste e consulta registros da tabela de e-mails. |
+| `RabbitMqConfig` | Declara filas, DLQ, conversor JSON e retry com backoff. |
 
-## Fluxos Principais
+## Fluxo Principal
 
-### Criação de usuário e envio de e-mail
+O fluxo principal começa quando um usuário é criado.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client
-    participant UserAPI as user-service
-    participant UserDB as user PostgreSQL
-    participant RabbitMQ
-    participant EmailConsumer as email-service consumer
-    participant EmailService
-    participant EmailDB as email PostgreSQL
-    participant SMTP
+1. O cliente chama `POST /api/v1/users` no `user-service`.
+2. O `user-service` salva o usuário no seu banco PostgreSQL.
+3. O `user-service` publica um evento `USER_CREATED` na fila `email-queue`.
+4. O `email-service` consome a mensagem da fila.
+5. O `email-service` cria ou reutiliza um registro de histórico com status `PENDING`.
+6. O envio de e-mail é tentado via SMTP.
+7. Se o envio funcionar, o histórico é atualizado para `SENT`.
+8. Se o envio falhar, o retry automático é acionado.
+9. Se todas as tentativas falharem, o histórico é atualizado para `FAILED` e a mensagem vai para a `email-dlq`.
 
-    Client->>UserAPI: POST /api/v1/users
-    UserAPI->>UserDB: Salva usuário
-    UserAPI->>RabbitMQ: Publica USER_CREATED em email-queue
-    UserAPI-->>Client: 201 Created
+Esse fluxo mantém o cadastro de usuários desacoplado do envio de e-mails. O usuário pode ser criado mesmo que o provedor SMTP esteja indisponível.
 
-    RabbitMQ-->>EmailConsumer: Entrega UserEventDto
-    EmailConsumer->>EmailService: sendUserCreatedEmail(event)
-    EmailService->>EmailDB: Cria histórico PENDING
-    EmailService->>SMTP: Tenta enviar e-mail
-
-    alt Envio realizado
-        SMTP-->>EmailService: Sucesso
-        EmailService->>EmailDB: Atualiza status SENT, attempts, sendDateEmail
-    else Falha temporaria
-        SMTP-->>EmailService: Erro
-        EmailService->>EmailDB: Mantem PENDING, incrementa attempts, lastAttemptAt e errorMessage
-        EmailConsumer->>EmailConsumer: Retry com exponential backoff
-    else Falha apos limite de tentativas
-        SMTP-->>EmailService: Erro
-        EmailService->>EmailDB: Atualiza status FAILED, attempts, lastAttemptAt e errorMessage
-        EmailConsumer->>RabbitMQ: Rejeita sem requeue
-        RabbitMQ->>RabbitMQ: Move mensagem para email-dlq
-    end
-```
-
-### Criação de usuários em lote
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client
-    participant UserAPI as user-service
-    participant UserDB as user PostgreSQL
-    participant RabbitMQ
-    participant EmailConsumer as email-service consumer
-    participant EmailService
-
-    Client->>UserAPI: POST /api/v1/users/batch
-    UserAPI->>UserDB: Salva usuários em lote
-    loop Para cada usuário criado
-        UserAPI->>RabbitMQ: Publica SIMULATED_DELAY_REQUESTED
-    end
-    UserAPI-->>Client: 201 Created
-
-    RabbitMQ-->>EmailConsumer: Entrega eventos da fila simulated-delay-queue
-    EmailConsumer->>EmailService: simulateEmailSending(event)
-```
-
-### Consulta do histórico de e-mails
-
-```mermaid
-flowchart TD
-    Client["Client / API Consumer"]
-    Controller["EmailHistoryController"]
-    Service["EmailHistoryService"]
-    Repository["EmailHistoryRepository"]
-    Database[("email PostgreSQL")]
-
-    Client -->|"GET /api/v1/emails"| Controller
-    Client -->|"GET /api/v1/emails/{emailId}"| Controller
-    Client -->|"GET /api/v1/emails/users/{userId}"| Controller
-    Client -->|"GET /api/v1/emails/status/{status}"| Controller
-
-    Controller --> Service
-    Service --> Repository
-    Repository --> Database
-```
-
-## Modelo de Dados
-
-```mermaid
-erDiagram
-    TB_USERS {
-        uuid user_id PK
-        string name
-        string email
-    }
-
-    TB_EMAIL {
-        uuid email_id PK
-        uuid user_id
-        string email_from
-        string email_to
-        string email_subject
-        text body
-        string origin_event_type
-        string status_email
-        int attempts
-        timestamp created_at
-        timestamp last_attempt_at
-        timestamp send_date_email
-        text error_message
-    }
-
-    TB_USERS ||--o{ TB_EMAIL : "originates events for"
-```
-
-`TB_USERS` e `TB_EMAIL` pertencem a bancos diferentes. A relação acima é lógica, não uma foreign key entre bancos.
-
-## Contrato de Eventos
+## Contrato de Evento
 
 Os eventos publicados pelo `user-service` usam o payload `UserEventDto`.
 
@@ -198,16 +93,23 @@ Os eventos publicados pelo `user-service` usam o payload `UserEventDto`.
 }
 ```
 
-### Tipos de evento
+| Campo | Descrição |
+| --- | --- |
+| `userId` | Identificador do usuário que originou o evento. |
+| `name` | Nome do usuário. |
+| `email` | E-mail de destino. |
+| `eventType` | Tipo do evento publicado. |
 
-| Evento | Origem | Fila | Descrição |
+### Tipos de Evento
+
+| Evento | Origem | Fila | Finalidade |
 | --- | --- | --- | --- |
-| `USER_CREATED` | `POST /api/v1/users` | `email-queue` | Solicita envio de e-mail após criação de usuário. |
-| `SIMULATED_DELAY_REQUESTED` | `POST /api/v1/users/batch` | `simulated-delay-queue` | Dispara processamento simulado com delay para cada usuário criado em lote. |
+| `USER_CREATED` | `POST /api/v1/users` | `email-queue` | Solicitar envio de e-mail de cadastro. |
+| `SIMULATED_DELAY_REQUESTED` | `POST /api/v1/users/batch` | `simulated-delay-queue` | Simular processamento em lote com delay. |
 
-### Filas
+## Filas RabbitMQ
 
-As filas são configuradas nos arquivos `application.yml` por meio de `app.rabbitmq.queues`.
+As filas são configuradas em `application.yml`.
 
 ```yaml
 app:
@@ -225,74 +127,107 @@ app:
       max-interval: 10000
 ```
 
-O `email-service` declara as filas em `RabbitMqConfig`. O `user-service` publica nas filas configuradas usando `RabbitTemplate` e `Jackson2JsonMessageConverter`.
-
-| Fila | Uso |
-| --- | --- |
-| `email-queue` | Fila principal de eventos de e-mail. |
-| `email-dlq` | Dead Letter Queue de mensagens que falharam após o limite de retry. |
-| `simulated-delay-queue` | Fila de processamento simulado usada no fluxo em lote. |
+| Fila ou exchange | Tipo | Uso |
+| --- | --- | --- |
+| `email-queue` | Queue | Fila principal de envio de e-mail. |
+| `email-dlq` | Queue | Armazena mensagens que falharam após o limite de retries. |
+| `email-dlx` | Direct exchange | Roteia mensagens rejeitadas para a DLQ. |
+| `simulated-delay-queue` | Queue | Fila usada pelo fluxo de simulação em lote. |
 
 ## Retry, Backoff e DLQ
 
-O `email-service` usa retry automático do Spring AMQP no listener da fila `email-queue`.
+Esta é a parte mais importante do `email-service` do ponto de vista de mensageria confiável.
 
-**Retry** é a repetição automática do processamento quando o envio falha por um erro temporário, como indisponibilidade do SMTP. O limite atual é configurado por `app.rabbitmq.retry.max-attempts`.
+### Problema
 
-**Backoff** é o intervalo entre as tentativas. A configuração atual usa exponential backoff: com `initial-interval: 2000`, `multiplier: 2.0` e `max-interval: 10000`, as tentativas aguardam intervalos crescentes até o teto configurado.
+Falhas de envio de e-mail podem ser temporárias. Exemplos:
 
-**Dead Letter Queue (DLQ)** é a fila que recebe mensagens rejeitadas depois da falha definitiva. A fila principal `email-queue` possui os argumentos:
+- indisponibilidade momentânea do SMTP;
+- falha de rede;
+- timeout;
+- instabilidade do provedor externo.
 
-```text
-x-dead-letter-exchange = email-dlx
-x-dead-letter-routing-key = email-dlq
-```
+Se o sistema marcar o e-mail como `FAILED` na primeira falha, ele pode perder mensagens que funcionariam em uma nova tentativa. Por outro lado, se a mensagem voltar infinitamente para a fila principal, ela pode travar o consumo e gerar loop.
 
-### Fluxo com sucesso
+### Solução Aplicada
 
-1. `user-service` publica o evento `USER_CREATED` na `email-queue`.
-2. `email-service` consome a mensagem e cria ou reutiliza um histórico `PENDING`.
-3. A tentativa é registrada em `attempts` e `lastAttemptAt`.
-4. Se o SMTP aceitar o envio, o histórico fica `SENT`, com `sendDateEmail` preenchido.
-5. A mensagem é confirmada pelo listener e sai da fila principal.
+O `email-service` usa retry automático do Spring AMQP com exponential backoff.
 
-### Fluxo com falha
+Com a configuração atual:
 
-1. `email-service` registra a tentativa e chama o SMTP.
-2. Se o SMTP falhar, o historico permanece `PENDING`, com `attempts`, `lastAttemptAt` e `errorMessage` atualizados.
-3. A excecao volta para o interceptor do Spring AMQP.
-4. O interceptor aguarda o backoff configurado e tenta novamente.
-5. Após o limite de tentativas, o recoverer marca o histórico como `FAILED`.
-6. A mensagem é rejeitada sem requeue, evitando loop infinito.
-7. O RabbitMQ move a mensagem para `email-dlq`.
+- máximo de tentativas: `3`;
+- primeira espera entre tentativas: `2000 ms`;
+- multiplicador: `2.0`;
+- intervalo máximo: `10000 ms`.
 
-## Histórico de Envio
+Na prática, o serviço tenta processar a mesma mensagem até três vezes. Entre as tentativas, o intervalo cresce progressivamente.
 
-O histórico é armazenado no `email-service`, porque esse serviço é o dono do envio e conhece o resultado final da operação.
+Quando as tentativas acabam, a mensagem é rejeitada sem requeue. Como a fila principal possui configuração de dead letter, o RabbitMQ move a mensagem para `email-dlq`.
 
-Cada registro responde às principais perguntas operacionais:
+### Onde Está no Código
 
-| Pergunta | Campo |
+| Arquivo | Responsabilidade |
 | --- | --- |
-| Esse e-mail foi enviado? | `statusEmail == SENT` |
-| Para quem foi enviado? | `emailTo` |
-| Qual evento originou o envio? | `originEventType` |
-| Deu erro? | `statusEmail == FAILED` |
-| Quantas tentativas teve? | `attempts` |
-| Quando foi enviado? | `sendDateEmail` |
-| Quando ocorreu a última tentativa? | `lastAttemptAt` |
-| Qual mensagem de erro retornou? | `errorMessage` |
+| `email/src/main/resources/application.yml` | Define nomes de filas, DLX, DLQ e parâmetros de retry. |
+| `email/src/main/java/dev/java10x/email/configuration/RabbitMqConfig.java` | Declara filas, DLQ, binding e `RetryInterceptor`. |
+| `email/src/main/java/dev/java10x/email/consumer/EmailConsumer.java` | Usa o container com retry no listener da `email-queue`. |
+| `email/src/main/java/dev/java10x/email/service/EmailService.java` | Atualiza histórico a cada tentativa e relança exceções para acionar retry. |
+| `email/src/main/java/dev/java10x/email/repositorie/EmailRepository.java` | Busca histórico `PENDING` existente para não criar um novo registro a cada retry. |
 
-### Status de e-mail
+### Resultado no Histórico
 
-| Status | Descrição |
+Quando o envio funciona:
+
+| Campo | Valor esperado |
 | --- | --- |
-| `PENDING` | Registro criado antes da tentativa de envio. |
-| `SENT` | E-mail enviado com sucesso. |
-| `FAILED` | Envio falhou e a mensagem de erro foi registrada. |
-| `DELIVERED` | Reservado para confirmação futura de entrega. |
+| `statusEmail` | `SENT` |
+| `attempts` | Número de tentativas realizadas |
+| `lastAttemptAt` | Data da última tentativa |
+| `sendDateEmail` | Data do envio bem-sucedido |
+| `errorMessage` | `null` |
 
-## APIs
+Quando todas as tentativas falham:
+
+| Campo | Valor esperado |
+| --- | --- |
+| `statusEmail` | `FAILED` |
+| `attempts` | Valor final de tentativas configurado |
+| `lastAttemptAt` | Data da última tentativa |
+| `sendDateEmail` | `null` |
+| `errorMessage` | Mensagem da causa da falha |
+
+## Histórico de E-mails
+
+O histórico pertence ao `email-service`, porque somente ele sabe se o envio foi realizado, quantas tentativas ocorreram e qual erro foi retornado pelo provedor SMTP.
+
+Campos principais da tabela `TB_EMAIL`:
+
+| Campo | Significado |
+| --- | --- |
+| `emailId` | Identificador do registro de histórico. |
+| `userId` | Usuário que originou o evento. |
+| `emailFrom` | Remetente. |
+| `emailTo` | Destinatário. |
+| `emailSubject` | Assunto do e-mail. |
+| `body` | Corpo do e-mail. |
+| `originEventType` | Evento que originou o envio. |
+| `statusEmail` | Status atual do envio. |
+| `attempts` | Quantidade de tentativas realizadas. |
+| `createdAt` | Data de criação do histórico. |
+| `lastAttemptAt` | Data da última tentativa. |
+| `sendDateEmail` | Data do envio bem-sucedido. |
+| `errorMessage` | Último erro registrado. |
+
+### Status
+
+| Status | Uso |
+| --- | --- |
+| `PENDING` | O envio ainda está em andamento ou aguardando novas tentativas. |
+| `SENT` | O e-mail foi enviado com sucesso. |
+| `FAILED` | O limite de tentativas foi esgotado. |
+| `DELIVERED` | Reservado para uma confirmação futura de entrega. |
+
+## API Reference
 
 ### User Service
 
@@ -305,14 +240,14 @@ http://localhost:8081/api/v1/users
 | Método | Endpoint | Descrição |
 | --- | --- | --- |
 | `POST` | `/api/v1/users` | Cria um usuário e publica evento `USER_CREATED`. |
-| `POST` | `/api/v1/users/batch` | Cria usuários em lote e publica eventos `SIMULATED_DELAY_REQUESTED`. |
-| `GET` | `/api/v1/users` | Lista todos os usuários. |
+| `POST` | `/api/v1/users/batch` | Cria usuários em lote e publica eventos de simulação. |
+| `GET` | `/api/v1/users` | Lista usuários. |
 | `GET` | `/api/v1/users/{userId}` | Busca usuário por ID. |
-| `PUT` | `/api/v1/users/{userId}` | Atualiza todos os campos editáveis do usuário. |
+| `PUT` | `/api/v1/users/{userId}` | Atualiza todos os campos editáveis. |
 | `PATCH` | `/api/v1/users/{userId}` | Atualiza parcialmente os campos enviados. |
 | `DELETE` | `/api/v1/users/{userId}` | Remove usuário por ID. |
 
-#### Criar usuário
+Exemplo de criação:
 
 ```bash
 curl -X POST http://localhost:8081/api/v1/users \
@@ -320,44 +255,6 @@ curl -X POST http://localhost:8081/api/v1/users \
   -d '{
     "name": "Joao Silva",
     "email": "joao.silva@email.com"
-  }'
-```
-
-#### Criar usuários em lote
-
-```bash
-curl -X POST http://localhost:8081/api/v1/users/batch \
-  -H "Content-Type: application/json" \
-  -d '[
-    {
-      "name": "Joao Silva",
-      "email": "joao.silva@email.com"
-    },
-    {
-      "name": "Maria Souza",
-      "email": "maria.souza@email.com"
-    }
-  ]'
-```
-
-#### Atualizar usuário
-
-```bash
-curl -X PUT http://localhost:8081/api/v1/users/11111111-1111-1111-1111-111111111111 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Joao Silva Atualizado",
-    "email": "joao.atualizado@email.com"
-  }'
-```
-
-#### Atualizar parcialmente
-
-```bash
-curl -X PATCH http://localhost:8081/api/v1/users/11111111-1111-1111-1111-111111111111 \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Joao Parcial"
   }'
 ```
 
@@ -372,45 +269,17 @@ http://localhost:8080/api/v1/emails
 | Método | Endpoint | Descrição |
 | --- | --- | --- |
 | `GET` | `/api/v1/emails` | Lista todos os registros de envio. |
-| `GET` | `/api/v1/emails/{emailId}` | Busca um registro de envio por ID. |
-| `GET` | `/api/v1/emails/users/{userId}` | Lista envios relacionados a um usuário. |
+| `GET` | `/api/v1/emails/{emailId}` | Busca um registro por ID. |
+| `GET` | `/api/v1/emails/users/{userId}` | Lista envios de um usuário. |
 | `GET` | `/api/v1/emails/status/{status}` | Lista envios por status. |
 
-#### Consultar histórico
+Exemplos:
 
 ```bash
 curl http://localhost:8080/api/v1/emails
-```
-
-```bash
-curl http://localhost:8080/api/v1/emails/11111111-1111-1111-1111-111111111111
-```
-
-```bash
-curl http://localhost:8080/api/v1/emails/users/22222222-2222-2222-2222-222222222222
-```
-
-```bash
 curl http://localhost:8080/api/v1/emails/status/SENT
 curl http://localhost:8080/api/v1/emails/status/FAILED
 ```
-
-## Respostas de Erro
-
-Os serviços retornam erros em formato padronizado.
-
-```json
-{
-  "timestamp": "2026-06-17T19:00:00-03:00",
-  "status": 404,
-  "error": "Not Found",
-  "message": "Recurso não encontrado",
-  "path": "/api/v1/resource/id",
-  "fields": null
-}
-```
-
-Validações de entrada retornam `400 Bad Request`. Recursos inexistentes retornam `404 Not Found`.
 
 ## Execução Local
 
@@ -429,8 +298,8 @@ Validações de entrada retornam `400 Bad Request`. Recursos inexistentes retorn
 | `email-service` | `8080` |
 | RabbitMQ | `5672` |
 | RabbitMQ Management | `15672` |
-| PostgreSQL `user` | `5435` |
-| PostgreSQL `email` | `5433` |
+| PostgreSQL do `user-service` | `5435` |
+| PostgreSQL do `email-service` | `5433` |
 
 ### Subir RabbitMQ
 
@@ -441,7 +310,7 @@ docker run -d --name rabbitmq-local \
   rabbitmq:3-management
 ```
 
-Painel:
+Painel de administração:
 
 ```text
 http://localhost:15672
@@ -449,7 +318,7 @@ login: guest
 senha: guest
 ```
 
-### Subir bancos locais
+### Subir PostgreSQL
 
 ```bash
 cd user
@@ -461,23 +330,72 @@ cd email
 docker compose up -d
 ```
 
-### Rodar serviços
+### Rodar os Serviços
+
+Em um terminal:
 
 ```bash
 cd email
 mvn spring-boot:run
 ```
 
+Em outro terminal:
+
 ```bash
 cd user
 ./mvnw spring-boot:run
 ```
 
-O arquivo `commands.bash` contém uma sequência de comandos útil para execução manual local.
+## Como Testar
+
+### Cenário 1: criação de usuário com publicação de evento
+
+```bash
+curl -X POST http://localhost:8081/api/v1/users \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Usuario Teste",
+    "email": "usuario.teste@email.com"
+  }'
+```
+
+Depois consulte o histórico:
+
+```bash
+curl http://localhost:8080/api/v1/emails
+```
+
+Se o SMTP estiver configurado corretamente, o registro deve aparecer como `SENT`.
+
+### Cenário 2: retry e DLQ
+
+Para testar retry e DLQ localmente, deixe as credenciais SMTP inválidas no `email-service`.
+
+1. Suba RabbitMQ, PostgreSQL e os dois serviços.
+2. Crie um usuário pelo `user-service`.
+3. Acompanhe os logs do `email-service`.
+4. Aguarde o limite de tentativas.
+5. Consulte registros com status `FAILED`.
+
+```bash
+curl http://localhost:8080/api/v1/emails/status/FAILED
+```
+
+No RabbitMQ Management, acesse:
+
+```text
+http://localhost:15672
+```
+
+Verifique se a mensagem foi enviada para `email-dlq`.
+
+Importante: se a fila `email-queue` já existir sem argumentos de DLQ, apague a fila pelo painel ou recrie o container RabbitMQ. O RabbitMQ não permite redeclarar uma fila existente com argumentos diferentes.
 
 ## Configuração
 
 ### RabbitMQ
+
+Configuração usada pelos dois serviços:
 
 ```yaml
 spring:
@@ -490,52 +408,25 @@ spring:
 
 ### SMTP
 
-O `email-service` usa `spring.mail.*` para envio real de e-mails. Em ambiente local, credenciais inválidas fazem o envio falhar, acionar retry com backoff e, ao final, gravar o histórico com status `FAILED` e `errorMessage`.
+O envio real de e-mails usa `spring.mail.*` no `email-service`.
 
-### Testar retry e DLQ localmente
-
-1. Suba RabbitMQ, PostgreSQL e os dois serviços.
-2. Acesse o RabbitMQ Management em `http://localhost:15672` com `guest` / `guest`.
-3. Se a fila `email-queue` já existir sem DLQ, apague a fila pelo painel ou recrie o container do RabbitMQ. O RabbitMQ não permite redeclarar uma fila existente com argumentos diferentes.
-4. Configure credenciais SMTP inválidas no `email-service` para forçar falha de envio.
-5. Crie um usuário pelo `user-service`:
-
-```bash
-curl -X POST http://localhost:8081/api/v1/users \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Usuario Retry",
-    "email": "usuario.retry@email.com"
-  }'
+```yaml
+spring:
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: seu-email
+    password: sua-senha-ou-app-password
 ```
 
-6. Consulte o histórico:
-
-```bash
-curl http://localhost:8080/api/v1/emails/status/FAILED
-```
-
-7. No RabbitMQ Management, confira a mensagem em `email-dlq`.
+Em ambiente local, credenciais inválidas são úteis para testar retry, falha definitiva e DLQ.
 
 ## Decisões Técnicas
 
-- **Isolamento por serviço**: cada microserviço possui banco próprio e não acessa diretamente os dados do outro serviço.
+- **Banco por serviço**: cada microserviço possui seu próprio PostgreSQL.
 - **Comunicação assíncrona**: o `user-service` não espera o envio de e-mail para responder ao cliente.
-- **Histórico no serviço dono do envio**: o `email-service` registra tentativas, status e erros porque é o único serviço que conhece o resultado do envio.
-- **Contratos explícitos**: eventos usam DTOs dedicados e filas configuradas por propriedades.
-- **Tratamento padronizado de erros**: exceções REST são convertidas em respostas consistentes.
+- **Histórico no serviço consumidor**: o `email-service` registra tentativas e erros porque ele é o dono do processamento.
+- **Retry no consumidor**: o retry fica no `email-service`, onde a falha acontece.
+- **DLQ para falha definitiva**: mensagens que não puderam ser processadas não bloqueiam a fila principal.
+- **DTOs explícitos**: os eventos usam contratos próprios em vez de expor diretamente entidades JPA.
 
-## Limitações Atuais
-
-- Não há autenticação/autorização.
-- Não há paginação nas consultas de histórico.
-- Não há rastreamento distribuído entre os serviços.
-- `DELIVERED` está reservado, mas ainda não há confirmação de entrega pelo provedor SMTP.
-
-## Próximos Passos Recomendados
-
-- Adicionar paginação e filtros avançados no histórico de e-mails.
-- Adicionar correlation ID nos eventos e logs.
-- Criar testes de integração com RabbitMQ e PostgreSQL via Testcontainers.
-- Proteger APIs com autenticação.
-- Adicionar observabilidade com métricas, tracing e logs estruturados.
